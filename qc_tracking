@@ -1,0 +1,1383 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>品管追蹤與查詢系統</title>
+    <!-- 載入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 Font Awesome for Icons (提前載入確保圖示字體可用) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/js/all.min.js"></script>
+    
+    <!-- 設定 Tailwind 配置和 Inter/Noto Sans TC 字體 -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        // 確保中文字體優先，防止亂碼
+                        sans: ['Noto Sans TC', 'Inter', 'sans-serif'], 
+                    },
+                    colors: {
+                        'primary': '#1d4ed8', // Blue-700
+                        'secondary': '#f97316', // Orange-600
+                        'success': '#10b981', // Emerald-500
+                        'warning': '#f59e0b', // Amber-500
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            font-family: 'Noto Sans TC', 'Inter', sans-serif;
+            background-color: #f8fafc; /* Lightest blue-gray background */
+        }
+        .app-container {
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+        }
+        .tab-button {
+            transition: all 0.2s;
+            border-bottom: 3px solid transparent;
+        }
+        .tab-button.active {
+            border-bottom: 3px solid #1d4ed8; /* Primary color */
+            color: #1d4ed8;
+            font-weight: 600;
+        }
+        /* 確保輸入框在行動端有足夠的點擊空間 */
+        input[type="text"], input[type="date"], input[type="password"], select {
+            min-height: 48px; 
+            font-size: 1rem;
+        }
+        /* 表格響應式 */
+        .table-responsive {
+            overflow-x: auto;
+            max-width: 100%;
+        }
+        /* 確保運行中任務的按鈕字體正確 */
+        #running-task-display button {
+             font-family: 'Noto Sans TC', 'Inter', sans-serif !important;
+        }
+    </style>
+</head>
+<body class="p-4 sm:p-8">
+
+    <div id="app" class="app-container max-w-7xl mx-auto bg-white rounded-xl overflow-hidden">
+        <header class="p-4 bg-primary text-white shadow-lg flex flex-col md:flex-row justify-between items-center space-y-3 md:space-y-0">
+            <h1 class="text-2xl font-bold">品管追蹤系統 (V7.4 列表優化版)</h1>
+            
+            <!-- 登入/角色選擇區塊 -->
+            <div id="auth-controls" class="flex flex-col sm:flex-row items-stretch sm:items-center space-y-2 sm:space-y-0 sm:space-x-3 bg-white p-3 rounded-lg text-gray-800 w-full md:w-auto">
+                 <select id="login-role" class="p-2 border border-gray-300 rounded-lg text-base bg-white w-full sm:w-auto focus:ring-primary focus:border-primary">
+                    <option value="" disabled selected>請選擇角色</option>
+                    <option value="QC">品管人員 (QC)</option>
+                    <option value="CSD">客服人員 (CSD)</option>
+                    <option value="MANAGER">主管 (總表)</option>
+                 </select>
+                 <input type="password" id="login-password" placeholder="輸入密碼" class="p-2 border border-gray-300 rounded-lg text-base w-full sm:w-auto focus:ring-primary focus:border-primary">
+                 <button id="login-button" class="bg-primary hover:bg-blue-800 text-white font-bold py-2 px-4 rounded-lg text-base transition disabled:opacity-50 w-full sm:w-auto">
+                     <i class="fas fa-sign-in-alt mr-1"></i> 登入
+                 </button>
+            </div>
+        </header>
+
+        <!-- 登入狀態訊息 -->
+        <div id="loading-overlay" class="p-6 text-center text-gray-600 bg-gray-50">
+            <i class="fas fa-spinner fa-spin mr-2"></i> 正在初始化系統...
+        </div>
+        <div id="unauthorized-message" class="p-6 text-center text-red-700 bg-red-50">
+             <i class="fas fa-lock mr-2"></i> 請先在上方選取您的身分並輸入密碼登入。
+             <p class="text-sm mt-2 text-gray-600">
+                 <strong>測試密碼 (僅供示範):</strong> QC: `qc123` | CSD: `csd123` | MANAGER: `manager123`
+             </p>
+        </div>
+
+        <!-- 主應用程式內容 (登入後顯示) -->
+        <div id="main-content" class="hidden">
+            <!-- Tab 導航列 (已修改文字) -->
+            <nav class="flex border-b border-gray-200 bg-gray-50">
+                <button id="tab-tracking" class="tab-button flex-1 py-3 px-4 text-center text-gray-600 hover:bg-gray-100 transition hidden" onclick="showTab('tracking')">
+                    <i class="fas fa-file-signature mr-2"></i> 輸入
+                </button>
+                <button id="tab-query" class="tab-button flex-1 py-3 px-4 text-center text-gray-600 hover:bg-gray-100 transition hidden" onclick="showTab('query')">
+                    <i class="fas fa-search mr-2"></i> 查詢
+                </button>
+                <button id="tab-summary" class="tab-button flex-1 py-3 px-4 text-center text-gray-600 hover:bg-gray-100 transition hidden" onclick="showTab('summary')">
+                    <i class="fas fa-table mr-2"></i> 總表
+                </button>
+            </nav>
+
+            <div class="p-4 sm:p-6">
+
+                <!-- QC 作業介面 (Tracking Tab) -->
+                <div id="tracking-view" class="tab-content">
+                    
+                    <!-- 新增任務 (單一表單) -->
+                    <h2 class="text-xl font-semibold mb-4 text-gray-700 border-b pb-2">啟動新的品管任務</h2>
+                    
+                    <form id="task-form" class="space-y-5 mb-8 p-4 sm:p-6 bg-success/5 border border-success/30 rounded-xl">
+                        
+                         <!-- 檢驗類型選擇 (初次/重新) -->
+                        <div class="border-b pb-4">
+                            <label class="block text-base font-medium text-gray-700 mb-2">檢驗類型 <span class="text-sm text-red-500">*</span></label>
+                            <div class="flex flex-wrap gap-6">
+                                <label class="flex items-center space-x-2 cursor-pointer">
+                                    <input type="radio" name="checkType" value="initial" checked class="form-radio text-success h-5 w-5" onchange="toggleRecheckInput(false)">
+                                    <span class="text-base font-semibold text-success">初次檢驗</span>
+                                </label>
+                                <label class="flex items-center space-x-2 cursor-pointer">
+                                    <input type="radio" name="checkType" value="recheck" class="form-radio text-secondary h-5 w-5" onchange="toggleRecheckInput(true)">
+                                    <span class="text-base font-semibold text-secondary">重新檢驗</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- 1. 品管人員 -->
+                        <div>
+                            <label for="qcPersonnel" class="block text-sm font-medium text-gray-700 mb-1">品管人員 <span class="text-sm text-red-500">*</span></label>
+                            <select id="qcPersonnel" required class="w-full p-3 border border-gray-300 rounded-lg focus:ring-success focus:border-success transition duration-150">
+                                <option value="" disabled selected>請選擇人員</option>
+                                <option value="王小明">王小明</option>
+                                <option value="林佳宜">林佳宜</option>
+                                <option value="陳志遠">陳志遠</option>
+                            </select>
+                        </div>
+                        
+                        <!-- 2. 品項編號 (初次檢驗) -->
+                        <div id="initial-item-input">
+                            <label for="itemId" class="block text-sm font-medium text-gray-700 mb-1">品項編號 <span class="text-sm text-red-500">*</span></label>
+                            <input type="text" id="itemId" required placeholder="例如: PROD-A456" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-success focus:border-success transition duration-150">
+                        </div>
+
+                        <!-- 3. 重新檢驗品項選擇 (可搜尋下拉式) -->
+                        <div id="recheck-item-select" class="hidden">
+                            <label for="recheckItemIdInput" class="block text-sm font-medium text-gray-700 mb-1">重新檢驗品項編號 (輸入搜尋) <span class="text-sm text-red-500">*</span></label>
+                            <!-- 搜尋輸入框 -->
+                            <input type="text" id="recheckItemIdInput" placeholder="輸入品項編號快速搜尋..." class="w-full p-3 border border-secondary rounded-lg focus:ring-secondary focus:border-secondary transition duration-150 mb-2">
+                            <!-- 下拉選單 (欄位大一點) -->
+                            <select id="recheckItemId" size="5" class="w-full p-3 border border-secondary rounded-lg focus:ring-secondary focus:border-secondary transition duration-150 h-32 text-base">
+                                <option value="" disabled selected>載入中...</option>
+                            </select>
+                            <div id="recheck-status" class="text-sm text-red-500 mt-1"></div>
+                        </div>
+                        
+                        <!-- 4. 日期 -->
+                        <div>
+                            <label for="date" class="block text-sm font-medium text-gray-700 mb-1">日期 <span class="text-sm text-red-500">*</span></label>
+                            <input type="date" id="date" required class="w-full p-3 border border-gray-300 rounded-lg focus:ring-success focus:border-success transition duration-150">
+                        </div>
+                        
+                        <button type="submit" id="startButton" class="w-full bg-success hover:bg-emerald-600 text-white font-bold py-3 rounded-lg transition duration-200 disabled:opacity-50 text-xl shadow-lg">
+                            <i class="fas fa-play-circle mr-2"></i> 啟動任務追蹤
+                        </button>
+                    </form>
+
+                    <!-- 進行中任務儀表板 (改為列表/表格形式) -->
+                    <h2 class="text-xl font-semibold mb-4 text-gray-700 border-b pb-2 mt-8">目前進行中任務 (列表)</h2>
+
+                    <div id="running-task-display-wrapper" class="table-responsive rounded-lg shadow-md border hidden">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-blue-50">
+                                <tr>
+                                    <!-- 1. 操作/完成按鈕 -->
+                                    <th class="px-4 py-3 text-center text-xs font-medium text-gray-600 uppercase tracking-wider w-[100px]">
+                                        操作
+                                    </th>
+                                    <!-- 2. 品項編號 -->
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
+                                        品項編號
+                                    </th>
+                                    <!-- 3. 品管人員 -->
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider w-[150px]">
+                                        品管人員
+                                    </th>
+                                    <!-- 4. 已耗時 -->
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-red-600 uppercase tracking-wider w-[120px]">
+                                        已耗時
+                                    </th>
+                                    <!-- 5. 類型 -->
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider w-[100px]">
+                                        類型
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody id="running-task-display" class="bg-white divide-y divide-gray-200">
+                                <!-- 進行中任務將在這裡以表格行形式載入 -->
+                            </tbody>
+                        </table>
+                        
+                        <div id="no-running-task" class="p-4 bg-warning/10 text-warning border border-warning/30 rounded-b-lg text-center font-medium">
+                            目前沒有進行中的品管任務。
+                        </div>
+                    </div>
+                    
+                </div>
+
+                <!-- CSD 查詢介面 (Query Tab) -->
+                <div id="query-view" class="tab-content hidden">
+                    <h2 class="text-xl font-semibold mb-4 text-gray-700 border-b pb-2">品項完成狀態查詢</h2>
+
+                    <div class="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-3 mb-6 p-4 bg-gray-50 rounded-lg border">
+                        <input type="text" id="queryItemId" placeholder="請輸入品項編號 (例如: PROD-A456)" class="flex-grow p-3 border border-gray-300 rounded-lg text-base focus:ring-primary focus:border-primary transition duration-150">
+                        <button id="queryButton" class="bg-primary hover:bg-blue-800 text-white font-bold py-3 px-6 rounded-lg transition duration-200 text-base flex-shrink-0">
+                            <i class="fas fa-search mr-2"></i> 查詢狀態
+                        </button>
+                    </div>
+
+                    <div id="query-results" class="space-y-4">
+                        <div class="p-4 bg-gray-100 border border-gray-200 rounded-lg text-center text-gray-600">
+                            請輸入品項編號進行查詢。
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 總表與報告頁面 (Summary Tab) -->
+                <div id="summary-view" class="tab-content hidden">
+                    <h2 class="text-xl font-semibold mb-4 text-gray-700 border-b pb-2">所有品管任務總表 (主管介面)</h2>
+
+                    <div class="flex flex-wrap gap-4 mb-6 items-end p-4 bg-gray-50 rounded-lg border">
+                        <div class="flex-1 min-w-[150px] max-w-xs">
+                            <label for="summary-filter-personnel" class="block text-sm font-medium text-gray-700 mb-1">品管人員</label>
+                            <select id="summary-filter-personnel" class="w-full p-2 border border-gray-300 rounded-lg text-base">
+                                <option value="">全部人員</option>
+                                <option value="王小明">王小明</option>
+                                <option value="林佳宜">林佳宜</option>
+                                <option value="陳志遠">陳志遠</option>
+                            </select>
+                        </div>
+                        <div class="flex-1 min-w-[150px]">
+                            <label for="summary-filter-start-date" class="block text-sm font-medium text-gray-700 mb-1">開始日期</label>
+                            <input type="date" id="summary-filter-start-date" class="w-full p-2 border border-gray-300 rounded-lg text-base transition duration-150">
+                        </div>
+                        <div class="flex-1 min-w-[150px]">
+                            <label for="summary-filter-end-date" class="block text-sm font-medium text-gray-700 mb-1">結束日期</label>
+                            <input type="date" id="summary-filter-end-date" class="w-full p-2 border border-gray-300 rounded-lg text-base transition duration-150">
+                        </div>
+                        <div class="flex space-x-2 mt-2 sm:mt-0">
+                            <button id="filterSummaryButton" class="bg-primary hover:bg-blue-800 text-white font-bold py-2 px-4 rounded-lg flex-shrink-0 min-w-[80px] text-base">
+                                <i class="fas fa-filter mr-1"></i> 篩選
+                            </button>
+                            <button id="clearFilterButton" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg flex-shrink-0 min-w-[80px] text-base">
+                                <i class="fas fa-undo mr-1"></i> 清除
+                            </button>
+                        </div>
+                        <button id="downloadCsvButton" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg flex-shrink-0 w-full md:w-auto text-base mt-2 md:mt-0">
+                            <i class="fas fa-download mr-1"></i> 下載 CSV
+                        </button>
+                    </div>
+
+                    <div class="table-responsive rounded-lg shadow-md border">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-100">
+                                <tr>
+                                    <th class="px-3 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider task-sort-header" data-sort-key="itemId">
+                                        品項編號 <span class="sort-icon" data-key="itemId"></span>
+                                    </th>
+                                    <th class="px-3 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider task-sort-header" data-sort-key="date">
+                                        日期 <span class="sort-icon" data-key="date"></span>
+                                    </th>
+                                    <th class="px-3 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider task-sort-header" data-sort-key="status">
+                                        狀態 <span class="sort-icon" data-key="status"></span>
+                                    </th>
+                                    <th class="px-3 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider task-sort-key="elapsedTime">
+                                        總耗時 <span class="sort-icon" data-key="elapsedTime"></span>
+                                    </th>
+                                    <th class="px-3 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider task-sort-header" data-sort-key="recheckOfId">
+                                        重新檢驗 <span class="sort-icon" data-key="recheckOfId"></span>
+                                    </th>
+                                    <th id="manager-action-header" class="px-3 py-3 text-center text-xs font-medium text-gray-600 uppercase tracking-wider hidden">
+                                        主管操作
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody id="summary-table-body" class="bg-white divide-y divide-gray-200">
+                                <!-- 任務資料會在這裡載入 -->
+                            </tbody>
+                        </table>
+                    </div>
+                    <div id="summary-loading" class="mt-4 text-center text-gray-500 hidden">
+                        <i class="fas fa-spinner fa-spin mr-2"></i> 正在載入資料...
+                    </div>
+                    <div id="summary-empty" class="mt-4 text-center text-gray-500 p-4 bg-gray-100 rounded-lg hidden font-medium">
+                        無任務記錄。
+                    </div>
+                </div>
+
+                <!-- 訊息/確認 Modal (共用) -->
+                <div id="action-modal" class="fixed inset-0 bg-gray-900 bg-opacity-70 hidden items-center justify-center p-4 z-50">
+                    <div class="bg-white rounded-xl p-6 w-full max-w-sm shadow-2xl">
+                        <h3 id="modal-title" class="text-xl font-bold mb-3 text-primary">訊息</h3>
+                        <p id="modal-body" class="mb-6 text-gray-700 text-base"></p>
+                        <div id="modal-buttons" class="flex justify-end space-x-3">
+                            <!-- 按鈕將由 JS 根據需求 (訊息或確認) 動態插入 -->
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase 模組載入 -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { 
+            getFirestore, 
+            collection, 
+            addDoc, 
+            updateDoc, 
+            doc, 
+            query, 
+            where, 
+            onSnapshot,
+            getDocs,
+            serverTimestamp,
+            deleteDoc, 
+            setLogLevel 
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // 設定 Firebase Debug Log
+        setLogLevel('Debug');
+
+        // --- 模擬密碼資料庫 (測試用) ---
+        const USER_ROLES = {
+            'QC': 'qc123',
+            'CSD': 'csd123',
+            'MANAGER': 'manager123'
+        };
+
+
+        // --- 全域變數初始化 ---
+        let db, auth, userId = null;
+        let userRole = null; 
+        let runningTimers = {};
+        const QC_COLLECTION_NAME = 'qc_tasks';
+        let allTasksData = []; // 儲存所有任務的資料
+        
+        // 排序狀態
+        let currentSortKey = 'date'; 
+        let currentSortDirection = 'desc'; 
+        
+        // 元素參考
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const unauthorizedMessage = document.getElementById('unauthorized-message');
+        const mainContent = document.getElementById('main-content');
+        const loginButton = document.getElementById('login-button');
+        const loginRole = document.getElementById('login-role');
+        const loginPassword = document.getElementById('login-password');
+        const recheckItemIdInput = document.getElementById('recheckItemIdInput');
+        const recheckItemIdSelector = document.getElementById('recheckItemId');
+        const initialItemInput = document.getElementById('initial-item-input');
+        const recheckItemSelect = document.getElementById('recheck-item-select');
+        const managerActionHeader = document.getElementById('manager-action-header');
+
+
+        // 檢查環境變數
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null; 
+
+        /**
+         * 格式化毫秒為 HH:MM:SS
+         */
+        function formatTime(totalMilliseconds) {
+            if (totalMilliseconds < 0 || isNaN(totalMilliseconds)) return 'N/A';
+            const totalSeconds = Math.floor(totalMilliseconds / 1000);
+            const hours = Math.floor(totalSeconds / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = totalSeconds % 60;
+
+            const pad = (num) => String(num).padStart(2, '0');
+            return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+        }
+
+        // --- 彈出視窗相關功能 (自定義 Modal) ---
+
+        const actionModal = document.getElementById('action-modal');
+        const modalTitle = document.getElementById('modal-title');
+        const modalBody = document.getElementById('modal-body');
+        const modalButtons = document.getElementById('modal-buttons');
+
+        /** 關閉 Modal */
+        window.closeActionModal = () => {
+            actionModal.classList.add('hidden');
+            actionModal.classList.remove('flex');
+            modalButtons.innerHTML = ''; // 清除所有按鈕
+        }
+
+        /**
+         * 顯示簡單訊息 Modal
+         * @param {string} title - 標題
+         * @param {string} body - 內容
+         * @param {string} type - 類型 (error, success, info)
+         */
+        window.showSimpleModal = (title, body, type = 'info') => {
+            modalTitle.textContent = title;
+            modalBody.textContent = body;
+            modalTitle.className = 'text-xl font-bold mb-3 ' + 
+                (type === 'error' ? 'text-red-600' : 
+                 type === 'success' ? 'text-success' : 'text-primary');
+
+            // 只有一個確定按鈕
+            modalButtons.innerHTML = `
+                <button onclick="closeActionModal()" class="w-full bg-primary hover:bg-blue-800 text-white font-bold py-2 rounded-lg transition duration-200 text-base">
+                    確定
+                </button>
+            `;
+            
+            actionModal.classList.remove('hidden');
+            actionModal.classList.add('flex');
+        }
+
+        /**
+         * 顯示確認對話框 Modal (通用版)
+         * @param {string} title - 標題
+         * @param {string} body - 內容 (支援 HTML 標籤)
+         * @param {string} type - 類型 (success, warning, error) 決定主按鈕顏色
+         * @param {Function} onConfirm - 點擊確認後執行的回調函數
+         * @param {string} confirmText - 確認按鈕文字
+         * @param {string} cancelText - 取消按鈕文字
+         */
+        const showCustomConfirmModal = (title, body, type, onConfirm, confirmText, cancelText) => {
+            modalTitle.textContent = title;
+            modalBody.innerHTML = body; // 使用 innerHTML 支援 strong 標籤
+            
+            const primaryColorClass = 
+                type === 'error' ? 'bg-red-600 hover:bg-red-700' :
+                type === 'success' ? 'bg-success hover:bg-emerald-700' :
+                'bg-primary hover:bg-blue-800';
+
+            modalTitle.className = 'text-xl font-bold mb-3 ' + 
+                (type === 'error' ? 'text-red-600' : 
+                 type === 'success' ? 'text-success' : 'text-primary');
+
+            modalButtons.innerHTML = `
+                <button id="modal-cancel" onclick="closeActionModal()" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition text-base">
+                    ${cancelText}
+                </button>
+                <button id="modal-confirm" class="px-4 py-2 text-white rounded-lg transition text-base font-bold ${primaryColorClass}">
+                    ${confirmText}
+                </button>
+            `;
+
+            document.getElementById('modal-confirm').onclick = () => {
+                onConfirm();
+                closeActionModal();
+            };
+            
+            actionModal.classList.remove('hidden');
+            actionModal.classList.add('flex');
+        }
+
+
+        /**
+         * 切換重新檢驗的輸入框
+         */
+        window.toggleRecheckInput = (isRecheck) => {
+            if (isRecheck) {
+                initialItemInput.classList.add('hidden');
+                document.getElementById('itemId').removeAttribute('required');
+                recheckItemSelect.classList.remove('hidden');
+                document.getElementById('recheckItemId').setAttribute('required', '');
+                
+            } else {
+                initialItemInput.classList.remove('hidden');
+                document.getElementById('itemId').setAttribute('required', '');
+                recheckItemSelect.classList.add('hidden');
+                document.getElementById('recheckItemId').removeAttribute('required');
+            }
+        }
+
+
+        /**
+         * 根據角色更新 UI 介面，並導向預設 Tab
+         * @param {string} role 角色名稱 (QC, CSD, MANAGER)
+         */
+        const updateUIAccess = (role) => {
+            document.querySelectorAll('.tab-button').forEach(btn => btn.classList.add('hidden'));
+
+            loginRole.disabled = true;
+            loginPassword.disabled = true;
+            loginButton.disabled = true;
+
+            loadingOverlay.classList.add('hidden');
+            unauthorizedMessage.classList.add('hidden');
+            mainContent.classList.remove('hidden');
+            
+            // 總表的操作列預設隱藏
+            managerActionHeader.classList.add('hidden');
+
+            let defaultTab = '';
+
+            if (role === 'QC') {
+                document.getElementById('tab-tracking').classList.remove('hidden');
+                document.getElementById('tab-query').classList.remove('hidden'); 
+                defaultTab = 'tracking';
+            } else if (role === 'CSD') {
+                document.getElementById('tab-query').classList.remove('hidden');
+                defaultTab = 'query';
+            } else if (role === 'MANAGER') {
+                document.getElementById('tab-tracking').classList.remove('hidden');
+                document.getElementById('tab-query').classList.remove('hidden');
+                document.getElementById('tab-summary').classList.remove('hidden');
+                defaultTab = 'summary'; 
+                managerActionHeader.classList.remove('hidden'); // 主管顯示操作列
+            } else {
+                mainContent.classList.add('hidden');
+                unauthorizedMessage.classList.remove('hidden');
+                return;
+            }
+
+            showTab(defaultTab);
+            
+            // 啟動資料監聽器 (只有在登入後才啟動)
+            setupTrackingListeners(); 
+            setupSummaryTableListener(); 
+        };
+
+
+        /**
+         * 切換顯示的 Tab (新增權限檢查)
+         */
+        window.showTab = (tabName) => {
+            let isAuthorized = false;
+            // 權限檢查邏輯：QC, CSD, MANAGER 都有查詢權限
+            if (tabName === 'tracking' && (userRole === 'QC' || userRole === 'MANAGER')) {
+                isAuthorized = true;
+            } else if (tabName === 'query' && (userRole === 'CSD' || userRole === 'MANAGER' || userRole === 'QC')) { 
+                isAuthorized = true;
+            } else if (tabName === 'summary' && userRole === 'MANAGER') {
+                isAuthorized = true;
+            }
+
+            if (!isAuthorized) {
+                showSimpleModal('權限不足', '您目前的身分無權訪問此頁面。', 'error');
+                
+                // 嘗試導向用戶有權限的第一個 Tab
+                let fallbackTab = ''; 
+                if (userRole === 'QC' || userRole === 'MANAGER') fallbackTab = 'tracking';
+                else if (userRole === 'CSD') fallbackTab = 'query';
+                
+                if(fallbackTab){
+                    document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+                    document.querySelectorAll('.tab-button').forEach(el => el.classList.remove('active'));
+                    
+                    document.getElementById(`${fallbackTab}-view`).classList.remove('hidden');
+                    document.getElementById(`tab-${fallbackTab}`).classList.add('active');
+                }
+                return;
+            }
+
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+            document.querySelectorAll('.tab-button').forEach(el => el.classList.remove('active'));
+            document.getElementById(`${tabName}-view`).classList.remove('hidden');
+            document.getElementById(`tab-${tabName}`).classList.add('active');
+            
+            if (tabName === 'summary' && window.allTasksData) {
+                handleSummaryFilter();
+            }
+        }
+
+        /**
+         * 處理登入按鈕點擊事件 (密碼驗證)
+         */
+        const handleLogin = () => {
+            const role = loginRole.value;
+            const password = loginPassword.value;
+
+            if (!role || !password) {
+                return showSimpleModal('登入失敗', '請選擇身分並輸入密碼。', 'error');
+            }
+
+            if (USER_ROLES[role] && USER_ROLES[role] === password) {
+                userRole = role;
+                updateUIAccess(userRole);
+                showSimpleModal('登入成功', `您已以【${userRole}】身分登入系統。`, 'success');
+            } else {
+                showSimpleModal('登入失敗', '身分或密碼錯誤。', 'error');
+                loginPassword.value = '';
+            }
+        };
+
+
+        // --- Firebase 初始化與認證 ---
+        const initializeFirebase = async () => {
+            try {
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        console.log(`Firebase Authenticated: UID=${userId}`);
+                        loadingOverlay.classList.add('hidden');
+                    } else {
+                        userId = null;
+                        loadingOverlay.classList.add('hidden');
+                    }
+                });
+
+            } catch (error) {
+                console.error("Firebase 初始化失敗:", error);
+                showSimpleModal('初始化錯誤', `系統初始化失敗，請檢查配置。錯誤碼: ${error.code}`, 'error');
+            }
+        };
+
+        // --- Firestore 集合參考 ---
+        function getQcTasksCollectionRef() {
+            if (!db) throw new Error("Firestore 未初始化");
+            // 公開資料路徑：/artifacts/{appId}/public/data/{your_collection_name}
+            const collectionPath = `artifacts/${appId}/public/data/${QC_COLLECTION_NAME}`;
+            return collection(db, collectionPath);
+        }
+
+        // --- 追蹤頁面邏輯 (Start/End Task & Delete Task) ---
+
+        /**
+         * 處理「啟動任務追蹤」按鈕事件
+         */
+        const handleStartTask = async (e) => {
+            e.preventDefault();
+            if (userRole !== 'QC' && userRole !== 'MANAGER') return showSimpleModal('錯誤', '只有品管人員或主管可以新增任務。', 'error');
+            if (!userId) return showSimpleModal('錯誤', '使用者尚未登入，無法開始任務。', 'error');
+
+            const qcPersonnel = document.getElementById('qcPersonnel').value;
+            const date = document.getElementById('date').value;
+            const checkType = document.querySelector('input[name="checkType"]:checked').value;
+            
+            let itemId, recheckOfId = null;
+
+            if (checkType === 'initial') {
+                itemId = document.getElementById('itemId').value.trim();
+                if (!itemId) return showSimpleModal('錯誤', '請輸入初次檢驗的品項編號。', 'error');
+            } else if (checkType === 'recheck') {
+                itemId = document.getElementById('recheckItemId').value;
+                if (!itemId) return showSimpleModal('錯誤', '請選擇要重新檢驗的品項編號。', 'error');
+                
+                const lastCompletedTask = window.allTasksData
+                    .filter(t => t.itemId === itemId && t.status === 'Completed')
+                    .sort((a, b) => (b.startTime || 0) - (a.startTime || 0))[0];
+                
+                if (lastCompletedTask) {
+                    recheckOfId = lastCompletedTask.id;
+                }
+            }
+
+            try {
+                await addDoc(getQcTasksCollectionRef(), {
+                    userId: userId, 
+                    qcPersonnel: qcPersonnel,
+                    itemId: itemId,
+                    date: date,
+                    startTime: Date.now(),
+                    endTime: null,
+                    status: 'In Progress',
+                    elapsedTime: 0,
+                    recheckOfId: recheckOfId,
+                    createdAt: serverTimestamp()
+                });
+
+                document.getElementById('task-form').reset();
+                document.getElementById('date').valueAsDate = new Date();
+                toggleRecheckInput(false); 
+
+                showSimpleModal('任務已開始', `品項 ${itemId} 的【${checkType === 'initial' ? '初次' : '重新'}檢驗】任務已成功啟動!`, 'success');
+
+            } catch (error) {
+                console.error("啟動任務失敗:", error);
+                showSimpleModal('操作失敗', `無法啟動任務。錯誤: ${error.message}`, 'error');
+            }
+        };
+
+        /**
+         * 執行結束任務的實際 Firestore 寫入操作
+         * UPDATED: 接收 itemId
+         */
+        const executeEndTask = async (taskId, startTime, itemId) => {
+            try {
+                const taskRef = doc(getQcTasksCollectionRef(), taskId);
+                const endTime = Date.now();
+                
+                if (runningTimers[taskId]) {
+                    clearInterval(runningTimers[taskId]);
+                    delete runningTimers[taskId];
+                }
+                
+                const elapsedMilliseconds = endTime - startTime;
+                const elapsedSeconds = Math.floor(elapsedMilliseconds / 1000);
+
+                await updateDoc(taskRef, {
+                    endTime: endTime,
+                    status: 'Completed',
+                    elapsedTime: elapsedSeconds
+                });
+
+                // UPDATED: 顯示品項名稱
+                showSimpleModal('任務已完成', `品項 ${itemId} 已完成。總耗時 ${formatTime(elapsedMilliseconds)}`, 'success');
+
+            } catch (error) {
+                console.error("結束任務失敗:", error);
+                showSimpleModal('操作失敗', `無法結束任務。錯誤: ${error.message}`, 'error');
+            }
+        };
+        
+        /**
+         * 處理「結束任務」二次確認流程 (防誤觸)
+         * UPDATED: 確保 itemId 被傳遞到 executeEndTask
+         */
+        window.confirmEndTask = (taskId, startTime, itemId) => {
+             if (userRole !== 'QC' && userRole !== 'MANAGER') {
+                return showSimpleModal('錯誤', '只有品管人員或主管可以結束任務。', 'error');
+            }
+            
+            const confirmationBody = `您確定要結束品項編號 <strong class="text-primary">${itemId}</strong> 的品管任務嗎？<br>此操作將記錄最終耗時。`;
+            
+            showCustomConfirmModal(
+                '確認完成任務', 
+                confirmationBody, 
+                'success', // 綠色主題
+                () => executeEndTask(taskId, startTime, itemId), // 確認後執行實際結束操作，傳入 itemId
+                '確認完成',
+                '取消'
+            );
+        }
+
+        
+        /**
+         * 處理刪除任務按鈕事件 (僅限 MANAGER)
+         */
+        window.handleDeleteTask = (taskId, itemId) => {
+            if (userRole !== 'MANAGER') {
+                return showSimpleModal('權限不足', '只有主管可以刪除任務記錄。', 'error');
+            }
+            
+            const confirmationBody = `您即將永久刪除品項編號 <strong class="text-red-600">${itemId}</strong> 的這筆追蹤記錄 (ID: ${taskId})。<br>此操作無法復原。`;
+
+            showCustomConfirmModal(
+                '確認刪除任務記錄', 
+                confirmationBody, 
+                'error', // 紅色主題
+                async () => {
+                    try {
+                        const taskRef = doc(getQcTasksCollectionRef(), taskId);
+                        await deleteDoc(taskRef);
+                        showSimpleModal('刪除成功', `品項 ${itemId} 的任務記錄已從資料庫中刪除。`, 'success');
+                    } catch (error) {
+                        console.error("刪除任務失敗:", error);
+                        showSimpleModal('操作失敗', `無法刪除任務。錯誤: ${error.message}`, 'error');
+                    }
+                },
+                '確認刪除',
+                '取消'
+            );
+        };
+        
+        /**
+         * 渲染多個進行中的任務 (改為列表/表格形式)
+         */
+        const renderRunningTasks = (runningTasks) => {
+            // 清理舊的計時器
+            Object.values(runningTimers).forEach(clearInterval);
+            runningTimers = {};
+            
+            const runningTaskDisplay = document.getElementById('running-task-display');
+            const noTaskMessage = document.getElementById('no-running-task');
+            const tableWrapper = document.getElementById('running-task-display-wrapper');
+            
+            runningTaskDisplay.innerHTML = '';
+            
+            if (runningTasks.length === 0) {
+                noTaskMessage.classList.remove('hidden');
+                tableWrapper.classList.add('hidden');
+                return;
+            }
+
+            noTaskMessage.classList.add('hidden');
+            tableWrapper.classList.remove('hidden');
+
+            runningTasks.forEach(task => {
+                const taskId = task.id;
+                const taskData = task.data;
+                const startTime = taskData.startTime;
+                const itemId = taskData.itemId;
+                
+                const taskType = taskData.recheckOfId ? 
+                    { text: '重新檢驗', color: 'bg-secondary' } : 
+                    { text: '初次檢驗', color: 'bg-success' };
+
+                const row = runningTaskDisplay.insertRow();
+                row.id = `task-${taskId}`;
+                row.className = 'hover:bg-blue-50 transition duration-150';
+
+                // 1. 操作/完成按鈕 (第一欄)
+                const cellAction = row.insertCell();
+                cellAction.className = 'px-4 py-2 whitespace-nowrap text-center';
+                cellAction.innerHTML = `
+                    <button id="endButton-${taskId}" 
+                        data-task-id="${taskId}"
+                        data-start-time="${startTime}"
+                        data-item-id="${itemId}" 
+                        style="font-family: 'Noto Sans TC', 'Inter', sans-serif;" 
+                        class="bg-success hover:bg-emerald-600 text-white font-bold text-sm py-2 px-3 rounded-lg transition duration-200 disabled:opacity-50 w-full">
+                        完成
+                    </button>
+                `;
+                
+                // 2. 品項編號
+                const cellItemId = row.insertCell();
+                cellItemId.className = 'px-4 py-2 whitespace-nowrap text-sm font-bold text-gray-800 break-all';
+                cellItemId.textContent = itemId;
+                
+                // 3. 品管人員
+                const cellPersonnel = row.insertCell();
+                cellPersonnel.className = 'px-4 py-2 whitespace-nowrap text-sm text-gray-700';
+                cellPersonnel.textContent = taskData.qcPersonnel;
+
+                // 4. 已耗時 (計時器目標)
+                const cellTime = row.insertCell();
+                cellTime.id = `elapsed-time-${taskId}-cell`;
+                cellTime.className = 'px-4 py-2 whitespace-nowrap font-bold text-red-600 text-base';
+                cellTime.textContent = '00:00:00'; // Placeholder
+
+                // 5. 類型
+                const cellType = row.insertCell();
+                cellType.className = 'px-4 py-2 whitespace-nowrap';
+                cellType.innerHTML = `
+                    <span class="px-2 py-1 text-xs rounded-full text-white font-semibold ${taskType.color}">
+                        ${taskType.text}
+                    </span>
+                `;
+                
+                // 設置計時器
+                const updateTimer = () => {
+                    const elapsedMs = Date.now() - startTime;
+                    const elapsedTimeCell = document.getElementById(`elapsed-time-${taskId}-cell`);
+                    if (elapsedTimeCell) {
+                        elapsedTimeCell.textContent = formatTime(elapsedMs);
+                    } else {
+                        // Timer target removed, clear interval
+                        clearInterval(runningTimers[taskId]);
+                        delete runningTimers[taskId];
+                    }
+                };
+
+                updateTimer(); // 立即更新一次
+                runningTimers[taskId] = setInterval(updateTimer, 1000);
+
+                // 綁定結束按鈕事件
+                const endButton = document.getElementById(`endButton-${taskId}`);
+                endButton.addEventListener('click', (e) => {
+                    const taskId = e.currentTarget.dataset.taskId;
+                    const startTime = parseInt(e.currentTarget.dataset.startTime);
+                    const itemId = e.currentTarget.dataset.itemId;
+                    window.confirmEndTask(taskId, startTime, itemId); 
+                });
+                
+                 if (userRole !== 'QC' && userRole !== 'MANAGER') {
+                    endButton.disabled = true;
+                    endButton.textContent = '無權';
+                 }
+            });
+        };
+
+
+        /**
+         * 設置即時監聽器來追蹤目前用戶進行中的任務 (Tracking Tab)
+         */
+        const setupTrackingListeners = () => {
+            if (!db) return; 
+
+            const q = query(
+                getQcTasksCollectionRef(),
+                where("status", "==", "In Progress")
+            );
+
+            onSnapshot(q, (snapshot) => {
+                const runningTasks = snapshot.docs.map(doc => ({
+                    id: doc.id,
+                    data: doc.data()
+                }));
+                
+                renderRunningTasks(runningTasks);
+
+            }, (error) => {
+                console.error("即時監聽錯誤:", error);
+            });
+        };
+        
+        /**
+         * 填充可搜尋的重新檢驗品項選擇器
+         */
+        const populateRecheckSelector = (completedItemIds) => {
+            if (!db) return; 
+            
+            recheckItemIdSelector.innerHTML = '';
+            
+            if (completedItemIds.length === 0) {
+                 recheckItemIdSelector.innerHTML = '<option value="" disabled selected>無已完成的品項</option>';
+            }
+
+            const defaultOption = document.createElement('option');
+            defaultOption.value = '';
+            defaultOption.textContent = '請選擇品項或在上方輸入搜尋...';
+            recheckItemIdSelector.appendChild(defaultOption);
+
+            completedItemIds.forEach(itemId => {
+                const option = document.createElement('option');
+                option.value = itemId;
+                option.textContent = itemId;
+                recheckItemIdSelector.appendChild(option);
+            });
+            
+            recheckItemIdInput.oninput = (e) => {
+                const filterText = e.target.value.toLowerCase();
+                
+                recheckItemIdSelector.innerHTML = '';
+                recheckItemIdSelector.appendChild(defaultOption);
+                
+                const filteredItems = completedItemIds.filter(itemId => 
+                    itemId.toLowerCase().includes(filterText)
+                );
+
+                if (filteredItems.length === 0) {
+                    recheckItemIdSelector.innerHTML = '<option value="" disabled selected>找不到符合的品項</option>';
+                } else {
+                    filteredItems.forEach(itemId => {
+                        const option = document.createElement('option');
+                        option.value = itemId;
+                        option.textContent = itemId;
+                        recheckItemIdSelector.appendChild(option);
+                    });
+                }
+                
+                // 嘗試自動選中唯一結果
+                if (filteredItems.length === 1 && recheckItemIdSelector.value !== filteredItems[0]) {
+                    recheckItemIdSelector.value = filteredItems[0];
+                }
+            };
+            
+            recheckItemIdSelector.onchange = (e) => {
+                recheckItemIdInput.value = e.target.value;
+            }
+        };
+
+
+        // --- 查詢頁面邏輯 (CSD/QC Query) ---
+
+        /**
+         * 處理查詢按鈕事件
+         */
+        const handleQuery = async () => {
+            if (userRole !== 'CSD' && userRole !== 'MANAGER' && userRole !== 'QC') return showSimpleModal('錯誤', '您無權執行查詢操作。', 'error');
+
+            const queryItemId = document.getElementById('queryItemId').value.trim();
+            const resultsEl = document.getElementById('query-results');
+            resultsEl.innerHTML = '';
+
+            if (!queryItemId) {
+                resultsEl.innerHTML = `<div class="p-4 bg-yellow-100 text-warning rounded-lg font-medium">請輸入品項編號。</div>`;
+                return;
+            }
+
+            try {
+                const q = query(
+                    getQcTasksCollectionRef(),
+                    where("itemId", "==", queryItemId)
+                );
+                
+                const querySnapshot = await getDocs(q);
+                
+                if (querySnapshot.empty) {
+                    resultsEl.innerHTML = `
+                        <div class="p-4 bg-red-100 text-red-700 rounded-lg font-medium">
+                            <i class="fas fa-exclamation-circle mr-2"></i> 找不到品項編號 ${queryItemId} 的任何追蹤記錄。
+                        </div>
+                    `;
+                    return;
+                }
+                
+                const latestTask = querySnapshot.docs.map(doc => ({id: doc.id, ...doc.data()}))
+                                        .sort((a, b) => (b.startTime || 0) - (a.startTime || 0))[0];
+
+                
+                let statusText, statusColor, completionTimeText;
+                let elapsedMs = latestTask.elapsedTime * 1000;
+                
+                if (latestTask.status === 'Completed') {
+                    statusText = '已完成';
+                    statusColor = 'bg-success/20 border-success text-success';
+                    completionTimeText = formatTime(elapsedMs);
+                } else {
+                    statusText = '進行中';
+                    statusColor = 'bg-warning/20 border-warning text-warning-700';
+                    elapsedMs = Date.now() - latestTask.startTime;
+                    completionTimeText = formatTime(elapsedMs) + ' (仍在計時)';
+                }
+                
+                const recheckInfo = latestTask.recheckOfId ? 
+                    `<span class="text-secondary font-bold">是 (重新檢驗)</span>` : 
+                    `<span class="text-success font-bold">否 (初次檢驗)</span>`;
+
+                const card = document.createElement('div');
+                card.className = `p-5 rounded-xl border-2 ${statusColor} shadow-lg`;
+                card.innerHTML = `
+                    <h3 class="text-2xl font-bold mb-3 text-primary border-b pb-1">狀態報告：${latestTask.itemId}</h3>
+                    <div class="grid grid-cols-2 gap-y-3 gap-x-4 text-base">
+                        <p class="col-span-2"><strong>品管人員:</strong> ${latestTask.qcPersonnel}</p>
+                        <p><strong>日期:</strong> ${latestTask.date}</p>
+                        <p><strong>是否為重新檢驗:</strong> ${recheckInfo}</p>
+                    </div>
+                    
+                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mt-4 p-4 rounded-lg bg-white shadow-inner border">
+                        <span class="font-semibold mb-1 sm:mb-0 text-lg">
+                            當前狀態: 
+                            <span class="px-3 py-1 rounded-full font-bold ${latestTask.status === 'Completed' ? 'bg-success text-white' : 'bg-warning text-white'}">${statusText}</span>
+                        </span>
+                        <span class="font-bold text-xl mt-2 sm:mt-0 text-red-600">總耗時: ${completionTimeText}</span>
+                    </div>
+                    
+                    <p class="mt-4 text-xs text-gray-500 break-all">Firestore Task ID: ${latestTask.id}</p>
+                `;
+
+                resultsEl.appendChild(card);
+
+            } catch (error) {
+                console.error("查詢失敗:", error);
+                showSimpleModal('查詢錯誤', `查詢資料時發生錯誤。錯誤: ${error.message}`, 'error');
+            }
+        };
+
+
+        // --- 總表頁面邏輯 (Summary Table) ---
+
+        /**
+         * 處理表格標頭點擊以進行排序
+         */
+        const handleSortClick = (key) => {
+             if (userRole !== 'MANAGER') return;
+            
+            if (currentSortKey === key) {
+                currentSortDirection = currentSortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                currentSortKey = key;
+                if (key === 'date' || key === 'elapsedTime') {
+                    currentSortDirection = 'desc';
+                } else {
+                    currentSortDirection = 'asc';
+                }
+            }
+            
+            handleSummaryFilter(); 
+        };
+
+        /**
+         * 設置即時監聽器來獲取所有任務 (Summary Tab)
+         */
+        const setupSummaryTableListener = () => {
+            if (!db) return;
+
+            const summaryLoadingEl = document.getElementById('summary-loading');
+            summaryLoadingEl.classList.remove('hidden');
+
+            const q = query(getQcTasksCollectionRef());
+
+            onSnapshot(q, (snapshot) => {
+                const tasks = snapshot.docs.map(doc => ({
+                    id: doc.id,
+                    ...doc.data()
+                }));
+                window.allTasksData = tasks; 
+                summaryLoadingEl.classList.add('hidden');
+                
+                const uniqueCompletedItemIds = [...new Set(tasks.filter(t => t.status === 'Completed').map(t => t.itemId))].sort();
+                populateRecheckSelector(uniqueCompletedItemIds);
+                
+                if (userRole === 'MANAGER') {
+                    handleSummaryFilter();
+                }
+
+            }, (error) => {
+                console.error("總表監聽錯誤:", error);
+                if(userRole === 'MANAGER') summaryLoadingEl.textContent = '載入資料失敗。';
+            });
+        };
+        
+        /**
+         * 渲染總表 (含篩選與排序邏輯)
+         */
+        const renderSummaryTable = (tasks, personnelFilter, startDate, endDate) => {
+            if (userRole !== 'MANAGER') return; 
+            
+            const tbody = document.getElementById('summary-table-body');
+            tbody.innerHTML = '';
+
+            let filteredTasks = tasks;
+            
+            // 1. 篩選
+            if (personnelFilter) {
+                filteredTasks = filteredTasks.filter(task => task.qcPersonnel === personnelFilter);
+            }
+            
+            if (startDate || endDate) {
+                const start = startDate ? new Date(startDate).getTime() : 0;
+                const end = endDate ? new Date(endDate).getTime() + (24 * 60 * 60 * 1000) - 1 : Infinity;
+
+                filteredTasks = filteredTasks.filter(task => {
+                    const taskTimestamp = task.startTime || (task.date ? new Date(task.date).getTime() : 0);
+                    return taskTimestamp >= start && taskTimestamp <= end;
+                });
+            }
+            
+            // 2. 排序
+            filteredTasks.sort((a, b) => {
+                let valA, valB;
+
+                switch (currentSortKey) {
+                    case 'elapsedTime':
+                        valA = a.elapsedTime || 0;
+                        valB = b.elapsedTime || 0;
+                        break;
+                    case 'date':
+                        valA = a.startTime || (a.date ? new Date(a.date).getTime() : 0);
+                        valB = b.startTime || (b.date ? new Date(b.date).getTime() : 0);
+                        break;
+                    case 'recheckOfId':
+                        valA = a.recheckOfId ? 1 : 0;
+                        valB = b.recheckOfId ? 1 : 0;
+                        if (valA === valB) {
+                            valA = a.itemId || '';
+                            valB = b.itemId || '';
+                        }
+                        break;
+                    default:
+                        valA = a[currentSortKey] || '';
+                        valB = b[currentSortKey] || '';
+                        break;
+                }
+                
+                let comparison = 0;
+                if (valA > valB) { comparison = 1; }
+                else if (valA < valB) { comparison = -1; }
+
+                return currentSortDirection === 'asc' ? comparison : comparison * -1;
+            });
+
+            // 3. 更新標頭圖示
+            document.querySelectorAll('.sort-icon').forEach(icon => {
+                icon.innerHTML = '';
+            });
+            const activeIcon = document.querySelector(`.sort-icon[data-key="${currentSortKey}"]`);
+            if (activeIcon) {
+                activeIcon.innerHTML = currentSortDirection === 'asc' 
+                    ? '<i class="fas fa-sort-up text-primary ml-1"></i>' 
+                    : '<i class="fas fa-sort-down text-primary ml-1"></i>';
+            }
+            
+            // 4. 渲染
+            if (filteredTasks.length === 0) {
+                 document.getElementById('summary-empty').classList.remove('hidden');
+                 return;
+            }
+
+            document.getElementById('summary-empty').classList.add('hidden');
+
+            filteredTasks.forEach(task => {
+                const statusText = task.status === 'Completed' ? '已完成' : '進行中';
+                const statusColor = task.status === 'Completed' ? 'text-success bg-success/10' : 'text-warning bg-warning/10';
+                
+                let completionTimeText = 'N/A';
+                let elapsedMs = 0;
+
+                if (task.status === 'Completed') {
+                    elapsedMs = task.elapsedTime * 1000;
+                    completionTimeText = formatTime(elapsedMs);
+                } else if (task.startTime) {
+                    elapsedMs = Date.now() - task.startTime;
+                    completionTimeText = formatTime(elapsedMs) + ' (即時)';
+                }
+                
+                const recheckInfo = task.recheckOfId ? 
+                    `<span class="text-secondary font-medium cursor-help" title="源於 ID: ${task.recheckOfId}">是</span>` : 
+                    `否`;
+
+
+                const row = tbody.insertRow();
+                row.className = 'hover:bg-blue-50 transition duration-150';
+                
+                row.innerHTML = `
+                    <td class="px-3 py-3 whitespace-nowrap text-sm font-medium text-gray-900">${task.itemId}</td>
+                    <td class="px-3 py-3 whitespace-nowrap text-sm text-gray-500">${task.date}</td>
+                    <td class="px-3 py-3 whitespace-nowrap">
+                        <span class="px-2 inline-flex text-sm leading-5 font-semibold rounded-full ${statusColor}">${statusText}</span>
+                    </td>
+                    <td class="px-3 py-3 whitespace-nowrap text-sm font-medium text-gray-700">${completionTimeText}</td>
+                    <td class="px-3 py-3 whitespace-nowrap text-sm font-medium">${recheckInfo}</td>
+                    <td class="px-3 py-3 whitespace-nowrap text-center">
+                        <button onclick="handleDeleteTask('${task.id}', '${task.itemId}')" 
+                            class="bg-red-500 hover:bg-red-600 text-white p-2 rounded-lg text-xs font-bold transition">
+                            <i class="fas fa-trash-alt"></i> 刪除
+                        </button>
+                    </td>
+                `;
+            });
+        };
+        
+        /**
+         * 處理總表篩選 (同時觸發排序)
+         */
+        const handleSummaryFilter = () => {
+             if (userRole !== 'MANAGER') return;
+             
+            if (!window.allTasksData) return;
+            
+            const personnel = document.getElementById('summary-filter-personnel').value;
+            const startDate = document.getElementById('summary-filter-start-date').value;
+            const endDate = document.getElementById('summary-filter-end-date').value;
+            
+            renderSummaryTable(window.allTasksData, personnel, startDate, endDate);
+        };
+        
+        /**
+         * 將當前篩選後的資料下載為 CSV 檔案
+         */
+        const handleDownloadCsv = () => {
+            if (userRole !== 'MANAGER') return showSimpleModal('權限不足', '只有主管可以下載總表資料。', 'error');
+
+             if (!window.allTasksData || window.allTasksData.length === 0) {
+                return showSimpleModal('下載失敗', '沒有資料可供下載。', 'info');
+            }
+
+            const personnelFilter = document.getElementById('summary-filter-personnel').value;
+            const startDate = document.getElementById('summary-filter-start-date').value;
+            const endDate = document.getElementById('summary-filter-end-date').value;
+            
+            let dataToExport = window.allTasksData;
+            
+            // 應用篩選器
+            if (personnelFilter) {
+                dataToExport = dataToExport.filter(task => task.qcPersonnel === personnelFilter);
+            }
+
+            if (startDate || endDate) {
+                const start = startDate ? new Date(startDate).getTime() : 0;
+                const end = endDate ? new Date(endDate).getTime() + (24 * 60 * 60 * 1000) - 1 : Infinity;
+
+                dataToExport = dataToExport.filter(task => {
+                    const taskTimestamp = task.startTime || (task.date ? new Date(task.date).getTime() : 0);
+                    return taskTimestamp >= start && taskTimestamp <= end;
+                });
+            }
+            
+            if (dataToExport.length === 0) {
+                 return showSimpleModal('下載失敗', '沒有找到符合篩選條件的資料可供下載。', 'info');
+            }
+            
+            // 應用排序
+            dataToExport.sort((a, b) => {
+                let valA, valB;
+                switch (currentSortKey) {
+                    case 'elapsedTime': valA = a.elapsedTime || 0; valB = b.elapsedTime || 0; break;
+                    case 'date': valA = a.startTime || (a.date ? new Date(a.date).getTime() : 0); valB = b.startTime || (b.date ? new Date(b.date).getTime() : 0); break;
+                    case 'recheckOfId': valA = a.recheckOfId ? 1 : 0; valB = b.recheckOfId ? 1 : 0; if (valA === valB) { valA = a.itemId || ''; valB = b.itemId || ''; } break;
+                    default: valA = a[currentSortKey] || ''; valB = b[currentSortKey] || ''; break;
+                }
+                let comparison = 0;
+                if (valA > valB) { comparison = 1; } else if (valA < valB) { comparison = -1; }
+                return currentSortDirection === 'asc' ? comparison : comparison * -1;
+            });
+
+
+            const headers = [
+                "品項編號", "品管人員", "日期", "狀態", "是否為重新檢驗", "總耗時 (秒)", "總耗時 (HH:MM:SS)", "開始時間 (UTC+8)", "結束時間 (UTC+8)", "重新檢驗來源ID", "Firestore ID"
+            ];
+            
+            const csvRows = dataToExport.map(task => {
+                const formatTimeLocal = (timestamp) => {
+                    return timestamp ? new Date(timestamp).toLocaleString('zh-TW', { hour12: false }) : '';
+                };
+                const startTimeStr = formatTimeLocal(task.startTime);
+                const endTimeStr = formatTimeLocal(task.endTime);
+                
+                return [
+                    task.itemId, task.qcPersonnel, task.date, task.status === 'Completed' ? '已完成' : '進行中',
+                    task.recheckOfId ? '是' : '否', task.elapsedTime, formatTime(task.elapsedTime * 1000),
+                    startTimeStr, endTimeStr, task.recheckOfId || '', task.id
+                ].map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',');
+            });
+            
+            const csvContent = "\ufeff" + [ // \ufeff 確保中文編碼正確
+                headers.join(','), ...csvRows
+            ].join('\n');
+            
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement("a");
+            const url = URL.createObjectURL(blob);
+            
+            let filename = `QC_Summary`;
+            if (personnelFilter) filename += `_${personnelFilter}`;
+            if (startDate || endDate) filename += `_Filtered`;
+            filename += `_${new Date().toISOString().slice(0, 10)}`;
+
+            link.setAttribute("href", url);
+            link.setAttribute("download", `${filename}.csv`);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            showSimpleModal('下載成功', `${filename}.csv 檔案已下載。`, 'success');
+        };
+
+        // --- 事件綁定 ---
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('date').valueAsDate = new Date();
+            
+            // 綁定登入事件
+            loginButton.addEventListener('click', handleLogin);
+            
+            // 綁定表單提交事件
+            document.getElementById('task-form').addEventListener('submit', handleStartTask);
+            document.getElementById('queryButton').addEventListener('click', handleQuery);
+            document.getElementById('filterSummaryButton').addEventListener('click', handleSummaryFilter);
+
+            // 總表清除篩選
+            document.getElementById('clearFilterButton').addEventListener('click', () => {
+                if (userRole !== 'MANAGER') return;
+                document.getElementById('summary-filter-personnel').value = '';
+                document.getElementById('summary-filter-start-date').value = '';
+                document.getElementById('summary-filter-end-date').value = '';
+                if (window.allTasksData) {
+                    handleSummaryFilter();
+                }
+            });
+
+            // 總表下載 CSV
+            document.getElementById('downloadCsvButton').addEventListener('click', handleDownloadCsv);
+
+            // 總表標頭點擊事件 (排序)
+            document.querySelectorAll('.task-sort-header').forEach(header => {
+                header.addEventListener('click', (e) => {
+                    const key = e.currentTarget.dataset.sortKey;
+                    if (key) {
+                        handleSortClick(key);
+                    }
+                });
+            });
+
+            // 確保初次檢驗是預設選項
+            toggleRecheckInput(false);
+
+            initializeFirebase();
+        });
+
+    </script>
+</body>
+</html>
